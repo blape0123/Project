@@ -1,0 +1,446 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>미로 최단 경로 찾기</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      min-height: 100vh;
+      background: #f0f2f5;
+      color: #202124;
+    }
+
+    .container {
+      width: min(960px, 100%);
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+      text-align: center;
+    }
+
+    .controls {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .file-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .file-name {
+      font-size: 14px;
+      color: #333;
+      word-break: break-word;
+      flex: 1;
+    }
+
+    button {
+      padding: 10px 14px;
+      font-size: 15px;
+      border: 1px solid #999;
+      border-radius: 8px;
+      background: #fff;
+      color: #111;
+      cursor: pointer;
+      transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+    }
+
+    button:active,
+    button.animate-press {
+      transform: scale(0.97);
+      box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.12);
+    }
+
+    .modeBtn {
+      margin-right: 8px;
+    }
+
+    .modeBtn.active {
+      background: #1877f2;
+      color: #fff;
+      border-color: #166fe5;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .canvas-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 960px;
+      background: #111;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid #ccc;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .hint {
+      padding: 14px;
+      background: #fff;
+      border: 1px solid #d2d6db;
+      border-radius: 10px;
+      line-height: 1.6;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-weight: 600;
+    }
+
+    .note {
+      color: #5f6368;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>미로 / 지도 최단 경로 찾기</h1>
+    <div class="controls">
+      <div class="file-row">
+        <button id="browseBtn">사진 선택</button>
+        <span id="fileName" class="file-name">업로드할 이미지 파일을 선택하세요.</span>
+        <input id="imageInput" type="file" accept="image/*" />
+      </div>
+      <p class="note">이미지를 업로드한 뒤 시작점과 도착점 모드를 선택하고 원하는 지점을 클릭하세요.</p>
+      <div>
+        <button id="modeStartBtn" class="modeBtn active">시작점 선택</button>
+        <button id="modeEndBtn" class="modeBtn">도착점 선택</button>
+      </div>
+      <div>
+        <button id="resetBtn" disabled>초기화</button>
+        <button id="findPathBtn" disabled>최단 경로 계산</button>
+      </div>
+      <p class="status" id="statusText">사진을 업로드하고 시작/도착점을 지정하세요.</p>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="imageCanvas"></canvas>
+      <canvas id="overlayCanvas" class="overlay"></canvas>
+    </div>
+    <div class="hint">
+      <strong>사용 방법</strong>
+      <ol>
+        <li>사진 선택 버튼을 눌러 이미지를 업로드합니다.</li>
+        <li>시작점 선택 모드에서 시작 위치를 클릭합니다.</li>
+        <li>도착점 선택 모드에서 도착 위치를 클릭합니다.</li>
+        <li>최단 경로 계산 버튼을 누르면 경로가 표시됩니다.</li>
+      </ol>
+    </div>
+  </div>
+
+  <script>
+    const MAX_CANVAS_SIZE = 600;
+    const imageInput = document.getElementById('imageInput');
+    const browseBtn = document.getElementById('browseBtn');
+    const fileName = document.getElementById('fileName');
+    const resetBtn = document.getElementById('resetBtn');
+    const findPathBtn = document.getElementById('findPathBtn');
+    const statusText = document.getElementById('statusText');
+    const imageCanvas = document.getElementById('imageCanvas');
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const canvasWrap = document.getElementById('canvasWrap');
+    const modeStartBtn = document.getElementById('modeStartBtn');
+    const modeEndBtn = document.getElementById('modeEndBtn');
+
+    let image = new Image();
+    let imageData = null;
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let imageScale = 1;
+    let startPoint = null;
+    let endPoint = null;
+    let startColor = null;
+    let grid = null;
+    let selectedMode = 'start';
+
+    function setStatus(text) {
+      statusText.textContent = text;
+    }
+
+    function getScaledSize(origWidth, origHeight) {
+      const max = Math.max(origWidth, origHeight);
+      if (max <= MAX_CANVAS_SIZE) {
+        return { width: origWidth, height: origHeight, scale: 1 };
+      }
+      const scale = MAX_CANVAS_SIZE / max;
+      return {
+        width: Math.max(1, Math.round(origWidth * scale)),
+        height: Math.max(1, Math.round(origHeight * scale)),
+        scale,
+      };
+    }
+
+    function resizeCanvas(canvas, w, h) {
+      canvas.width = w;
+      canvas.height = h;
+      canvas.style.width = '100%';
+      canvas.style.height = 'auto';
+    }
+
+    function drawOverlay(path = null) {
+      const ctx = overlayCanvas.getContext('2d');
+      overlayCanvas.width = canvasWidth;
+      overlayCanvas.height = canvasHeight;
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      if (path && path.length > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.95)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([10, 8]);
+        ctx.beginPath();
+        path.forEach((point, index) => {
+          const x = point.x + 0.5;
+          const y = point.y + 0.5;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.restore();
+      }
+      if (startPoint) {
+        ctx.fillStyle = 'rgba(0, 200, 0, 0.9)';
+        ctx.beginPath();
+        ctx.arc(startPoint.x + 0.5, startPoint.y + 0.5, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (endPoint) {
+        ctx.fillStyle = 'rgba(200, 0, 200, 0.9)';
+        ctx.beginPath();
+        ctx.arc(endPoint.x + 0.5, endPoint.y + 0.5, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function getCanvasCoordinates(event) {
+      const rect = imageCanvas.getBoundingClientRect();
+      const scaleX = canvasWidth / rect.width;
+      const scaleY = canvasHeight / rect.height;
+      const x = Math.min(Math.max(Math.floor((event.clientX - rect.left) * scaleX), 0), canvasWidth - 1);
+      const y = Math.min(Math.max(Math.floor((event.clientY - rect.top) * scaleY), 0), canvasHeight - 1);
+      return { x, y };
+    }
+
+    function getPixelColor(x, y) {
+      const idx = (y * canvasWidth + x) * 4;
+      return {
+        r: imageData.data[idx],
+        g: imageData.data[idx + 1],
+        b: imageData.data[idx + 2],
+      };
+    }
+
+    function createGridFromStartColor(color) {
+      const data = imageData.data;
+      const grid = new Uint8Array(canvasWidth * canvasHeight);
+      const tolerance = 90;
+      for (let y = 0; y < canvasHeight; y++) {
+        for (let x = 0; x < canvasWidth; x++) {
+          const idx = (y * canvasWidth + x) * 4;
+          const dr = data[idx] - color.r;
+          const dg = data[idx + 1] - color.g;
+          const db = data[idx + 2] - color.b;
+          const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+          grid[y * canvasWidth + x] = dist <= tolerance ? 1 : 0;
+        }
+      }
+      return grid;
+    }
+
+    function createGrid(imageData, width, height) {
+      const data = imageData.data;
+      const grid = new Uint8Array(width * height);
+      const threshold = 150;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const brightness = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+          grid[y * width + x] = brightness > threshold ? 1 : 0;
+        }
+      }
+      return grid;
+    }
+
+    function resetState() {
+      startPoint = null;
+      endPoint = null;
+      startColor = null;
+      grid = imageData ? createGrid(imageData, canvasWidth, canvasHeight) : null;
+      findPathBtn.disabled = true;
+      resetBtn.disabled = !imageData;
+      setStatus(imageData ? '시작점과 도착점을 선택하세요.' : '이미지를 업로드하세요.');
+      drawOverlay();
+    }
+
+    function loadImage(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        image.onload = () => {
+          const scaled = getScaledSize(image.naturalWidth, image.naturalHeight);
+          canvasWidth = scaled.width;
+          canvasHeight = scaled.height;
+          imageScale = scaled.scale;
+          resizeCanvas(imageCanvas, canvasWidth, canvasHeight);
+          resizeCanvas(overlayCanvas, canvasWidth, canvasHeight);
+          imageCanvas.getContext('2d').drawImage(image, 0, 0, canvasWidth, canvasHeight);
+          imageData = imageCanvas.getContext('2d').getImageData(0, 0, canvasWidth, canvasHeight);
+          grid = createGrid(imageData, canvasWidth, canvasHeight);
+          fileName.textContent = file.name;
+          resetState();
+          resetBtn.disabled = false;
+          if (imageScale < 1) {
+            setStatus('이미지가 축소되었습니다. 시작점과 도착점을 선택하세요.');
+          }
+        };
+        image.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function onCanvasClick(event) {
+      if (!imageData) return;
+      const { x, y } = getCanvasCoordinates(event);
+      if (selectedMode === 'start') {
+        startPoint = { x, y };
+        startColor = getPixelColor(x, y);
+        grid = createGridFromStartColor(startColor);
+        setStatus('시작점을 선택했습니다. 도착점을 선택하세요.');
+      } else {
+        if (!startPoint) {
+          setStatus('먼저 시작점을 선택하세요.');
+          return;
+        }
+        endPoint = { x, y };
+        setStatus('도착점을 선택했습니다. 경로 계산을 누르세요.');
+      }
+      findPathBtn.disabled = !(startPoint && endPoint);
+      drawOverlay();
+    }
+
+    function buildPath(prev, endIdx) {
+      const path = [];
+      let idx = endIdx;
+      while (idx >= 0) {
+        const y = Math.floor(idx / canvasWidth);
+        const x = idx % canvasWidth;
+        path.push({ x, y });
+        idx = prev[idx];
+      }
+      return path.reverse();
+    }
+
+    function findShortestPath() {
+      if (!startPoint || !endPoint || !grid) return null;
+      if (canvasWidth * canvasHeight > MAX_CANVAS_SIZE * MAX_CANVAS_SIZE) {
+        setStatus('이미지가 너무 큽니다. 더 작은 이미지로 시도해주세요.');
+        return null;
+      }
+      const startIdx = startPoint.y * canvasWidth + startPoint.x;
+      const endIdx = endPoint.y * canvasWidth + endPoint.x;
+      if (!grid[startIdx] || !grid[endIdx]) {
+        setStatus('시작점 또는 도착점이 이동 가능한 영역에 있지 않습니다. 다시 선택하세요.');
+        return null;
+      }
+      const size = canvasWidth * canvasHeight;
+      const queue = new Uint32Array(size);
+      const visited = new Uint8Array(size);
+      const prev = new Int32Array(size);
+      prev.fill(-1);
+      let qStart = 0;
+      let qEnd = 0;
+      queue[qEnd++] = startIdx;
+      visited[startIdx] = 1;
+      const dirs = [1, -1, canvasWidth, -canvasWidth];
+      while (qStart < qEnd) {
+        const current = queue[qStart++];
+        if (current === endIdx) break;
+        const cy = Math.floor(current / canvasWidth);
+        const cx = current % canvasWidth;
+        for (const delta of dirs) {
+          const next = current + delta;
+          const nx = cx + (delta === 1 ? 1 : delta === -1 ? -1 : 0);
+          const ny = cy + (delta === canvasWidth ? 1 : delta === -canvasWidth ? -1 : 0);
+          if (nx < 0 || nx >= canvasWidth || ny < 0 || ny >= canvasHeight) continue;
+          if (visited[next]) continue;
+          if (!grid[next]) continue;
+          visited[next] = 1;
+          prev[next] = current;
+          queue[qEnd++] = next;
+        }
+      }
+      if (!visited[endIdx]) {
+        setStatus('경로를 찾을 수 없습니다. 다른 위치를 시도하세요.');
+        return null;
+      }
+      return buildPath(prev, endIdx);
+    }
+
+    browseBtn.addEventListener('click', () => imageInput.click());
+    imageInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      fileName.textContent = file.name;
+      loadImage(file);
+    });
+
+    modeStartBtn.addEventListener('click', () => {
+      selectedMode = 'start';
+      modeStartBtn.classList.add('active');
+      modeEndBtn.classList.remove('active');
+      setStatus('시작점 선택 모드입니다. 이미지에서 시작 위치를 클릭하세요.');
+    });
+
+    modeEndBtn.addEventListener('click', () => {
+      selectedMode = 'end';
+      modeEndBtn.classList.add('active');
+      modeStartBtn.classList.remove('active');
+      setStatus('도착점 선택 모드입니다. 이미지에서 도착 위치를 클릭하세요.');
+    });
+
+    imageCanvas.addEventListener('click', onCanvasClick);
+
+    findPathBtn.addEventListener('click', () => {
+      findPathBtn.classList.add('animate-press');
+      setTimeout(() => findPathBtn.classList.remove('animate-press'), 180);
+      const path = findShortestPath();
+      if (path) {
+        drawOverlay(path);
+        setStatus(`최단 경로를 찾았습니다. 길이 ${path.length} 픽셀입니다.`);
+      }
+    });
+
+    resetBtn.addEventListener('click', resetState);
+    setStatus('사진 선택 후 시작점/도착점을 지정하세요.');
+  </script>
+</body>
+</html>
